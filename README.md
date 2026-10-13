@@ -7,6 +7,8 @@ See 'release/text/readme.html' for the end user read-me.
 Blender
 =======
 
+VioletBlender Windows build: [编译与运行说明](doc/guides/violet_windows_build.md).
+
 Blender is the free and open source 3D creation suite.
 It supports the entirety of the 3D pipeline—modeling, rigging, animation, simulation, rendering, compositing,
 motion tracking and video editing.
