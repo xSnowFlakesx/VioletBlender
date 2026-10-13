@@ -39,6 +39,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_files\windows\build_
 每次构建完成后，脚本会启动**刚编译并安装的程序**，检查版本、Python、NumPy、
 `.blend` 保存/重新加载，以及 32×32 的 Cycles CPU 渲染。任何阶段失败都会停止。
 
+也可以分别运行 `-Phase Prepare`、`-Phase Build`、`-Phase Test`，定位问题或只重跑
+启动测试。三个阶段应使用相同的 `-BuildDirectory` 和 `-InstallDirectory`；默认
+`-Phase All` 仍按顺序完成整个流程。单独运行 `Test` 不需要编译工具。
+
 ## 打开界面
 
 ```powershell
@@ -54,6 +58,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_files\windows\build_
 GitHub Actions 的 **Windows build and startup** 在 `mmd-main` 和当前开发分支推送时
 运行相同脚本。成功后可下载完整 Windows 构建目录；编译日志也会作为 artifact 保留
 7 天。手动触发需要先将 workflow 合入仓库默认分支。
+
+CI 将依赖下载、编译安装、后台测试列为独立步骤，可以直接看到当前进行到哪一步。
+对应日志为 `windows-prepare.log`、`windows-build.log` 和 `windows-test.log`。
 
 - 本机日志：`build_violet_windows_Release\windows-build.log`。
 - 提示 MSVC 版本不支持：更新 VS 2022，不能只安装旧版 C++ 工作负载。

@@ -26,13 +26,27 @@ jobs:
           lfs: false
           submodules: false
 
-      - name: Build and test installed Blender
+      - name: Download source assets and pinned Windows libraries
         shell: pwsh
         run: |
-          ./build_files/windows/build_violet.ps1 `
+          ./build_files/windows/build_violet.ps1 -Phase Prepare `
+            -BuildDirectory "$env:RUNNER_TEMP/violet-build" `
+            -InstallDirectory "$env:RUNNER_TEMP/violet-install"
+
+      - name: Configure, compile and install Windows x64
+        shell: pwsh
+        run: |
+          ./build_files/windows/build_violet.ps1 -Phase Build `
             -BuildDirectory "$env:RUNNER_TEMP/violet-build" `
             -InstallDirectory "$env:RUNNER_TEMP/violet-install" `
             -Jobs 2
+
+      - name: Verify startup, save/load and Cycles CPU render
+        shell: pwsh
+        run: |
+          ./build_files/windows/build_violet.ps1 -Phase Test `
+            -BuildDirectory "$env:RUNNER_TEMP/violet-build" `
+            -InstallDirectory "$env:RUNNER_TEMP/violet-install"
 
       - name: Upload portable Windows build
         uses: actions/upload-artifact@v4
@@ -48,7 +62,7 @@ jobs:
         with:
           name: Windows-build-diagnostics-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/violet-build/windows-build.log
+            ${{ runner.temp }}/violet-build/windows-*.log
             ${{ runner.temp }}/violet-build/CMakeFiles/CMakeConfigureLog.yaml
             ${{ runner.temp }}/violet-build/CMakeFiles/CMakeError.log
           if-no-files-found: warn
