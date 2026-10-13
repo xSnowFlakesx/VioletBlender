@@ -1,0 +1,69 @@
+name: Windows build and startup
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - mmd-main
+      - codex/windows-build-bootstrap
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - name: Check out source without LFS smudging
+        uses: actions/checkout@v4
+        # The build script retrieves upstream Blender LFS files and pinned Windows libraries.
+        with:
+          lfs: false
+          submodules: false
+
+      - name: Download source assets and pinned Windows libraries
+        shell: pwsh
+        run: |
+          ./build_files/windows/build_violet.ps1 -Phase Prepare `
+            -BuildDirectory "$env:RUNNER_TEMP/violet-build" `
+            -InstallDirectory "$env:RUNNER_TEMP/violet-install"
+
+      - name: Configure, compile and install Windows x64
+        shell: pwsh
+        run: |
+          ./build_files/windows/build_violet.ps1 -Phase Build `
+            -BuildDirectory "$env:RUNNER_TEMP/violet-build" `
+            -InstallDirectory "$env:RUNNER_TEMP/violet-install" `
+            -Jobs 2
+
+      - name: Verify startup, save/load and Cycles CPU render
+        shell: pwsh
+        run: |
+          ./build_files/windows/build_violet.ps1 -Phase Test `
+            -BuildDirectory "$env:RUNNER_TEMP/violet-build" `
+            -InstallDirectory "$env:RUNNER_TEMP/violet-install"
+
+      - name: Upload portable Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: VioletBlender-windows-x64-${{ github.sha }}
+          path: ${{ runner.temp }}/violet-install/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-build-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/violet-build/windows-*.log
+            ${{ runner.temp }}/violet-build/CMakeFiles/CMakeConfigureLog.yaml
+            ${{ runner.temp }}/violet-build/CMakeFiles/CMakeError.log
+          if-no-files-found: warn
+          retention-days: 7
