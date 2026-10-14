@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Violet PMX Import & Materials",
     "author": "VioletBlender contributors",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (4, 2, 0),
     "location": "File > Import; 3D View > Sidebar > Violet",
     "description": "Import PMX models and organize their materials and textures",
