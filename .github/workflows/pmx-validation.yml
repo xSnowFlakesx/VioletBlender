@@ -1,0 +1,117 @@
+name: PMX import and materials on Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mmd-main, codex/pmx-material-workflow]
+    paths:
+      - 'scripts/addons_core/mmd_tools/**'
+      - 'scripts/addons_core/violet_pmx/**'
+      - 'tests/python/violet_pmx_test.py'
+      - 'build_files/utils/package_violet_pmx.py'
+      - '.github/workflows/pmx-validation.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pmx-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+          submodules: false
+
+      - name: Find a successful unexpired VioletBlender Windows build
+        id: base
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runs = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/windows-build.yml/runs?status=success&per_page=30" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot query Windows build runs' }
+          foreach ($run in $runs.workflow_runs) {
+            $artifacts = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$($run.id)/artifacts" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot query Windows build artifacts' }
+            $artifact = $artifacts.artifacts | Where-Object { !$_.expired -and $_.name -like 'VioletBlender-windows-x64-*' } | Select-Object -First 1
+            if ($artifact) {
+              "run_id=$($run.id)" >> $env:GITHUB_OUTPUT
+              "artifact_name=$($artifact.name)" >> $env:GITHUB_OUTPUT
+              "base_sha=$($run.head_sha)" >> $env:GITHUB_OUTPUT
+              exit 0
+            }
+          }
+          throw 'Run Windows build and startup first: no unexpired portable build is available'
+
+      - name: Download the compiled Windows executable
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.base.outputs.run_id }}
+          name: ${{ steps.base.outputs.artifact_name }}
+          path: ${{ runner.temp }}/violet-base
+
+      - name: Install the current PMX packages and verify Blender 5.2
+        shell: pwsh
+        env:
+          VIOLET_PMX_INSTALLED: '1'
+          VIOLET_PMX_EXPECT_VERSION: '5.2'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = "$env:RUNNER_TEMP/violet-base"
+          $addons = "$base/5.2/scripts/addons_core"
+          if (!(Test-Path "$base/blender.exe") -or !(Test-Path $addons)) { throw 'Expected a Blender 5.2 portable build' }
+          foreach ($name in @('mmd_tools', 'violet_pmx')) {
+            if (Test-Path "$addons/$name") { Remove-Item "$addons/$name" -Recurse -Force }
+            Copy-Item "scripts/addons_core/$name" $addons -Recurse
+          }
+          & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_pmx_test.py 2>&1 | Tee-Object -FilePath pmx-validation.log
+          if ($LASTEXITCODE -ne 0) { throw "PMX validation failed: $LASTEXITCODE" }
+
+      - name: Package offline add-ons and record portable build provenance
+        shell: pwsh
+        env:
+          VIOLET_BASE_SHA: ${{ steps.base.outputs.base_sha }}
+          VIOLET_BASE_RUN: ${{ steps.base.outputs.run_id }}
+        run: |
+          python build_files/utils/package_violet_pmx.py --output "$env:RUNNER_TEMP/pmx-addon"
+          if ($LASTEXITCODE -ne 0) { throw 'Add-on packaging failed' }
+          Copy-Item doc/guides/violet_pmx.md "$env:RUNNER_TEMP/violet-base/Violet-PMX-Guide.md"
+          @{
+            executable_source_sha = $env:VIOLET_BASE_SHA
+            executable_build_run = $env:VIOLET_BASE_RUN
+            addon_source_sha = $env:GITHUB_SHA
+          } | ConvertTo-Json | Set-Content "$env:RUNNER_TEMP/violet-base/violet-pmx-build.json"
+
+      - name: Upload installable add-ons
+        uses: actions/upload-artifact@v4
+        with:
+          name: VioletBlender-PMX-addon-${{ github.sha }}
+          path: ${{ runner.temp }}/pmx-addon/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload portable Windows build with PMX packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: VioletBlender-windows-PMX-${{ github.sha }}
+          path: ${{ runner.temp }}/violet-base/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload validation log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PMX-validation-log-${{ github.sha }}
+          path: pmx-validation.log
+          if-no-files-found: warn
+          retention-days: 14

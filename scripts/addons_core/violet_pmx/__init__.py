@@ -1,0 +1,163 @@
+# SPDX-FileCopyrightText: 2026 VioletBlender contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+bl_info = {
+    "name": "Violet PMX Import & Materials",
+    "author": "VioletBlender contributors",
+    "version": (0, 1, 0),
+    "blender": (4, 2, 0),
+    "location": "File > Import; 3D View > Sidebar > Violet",
+    "description": "Import PMX models and organize their materials and textures",
+    "category": "Import-Export",
+}
+
+import addon_utils
+import bpy
+from bpy.props import BoolProperty, FloatProperty, StringProperty
+from bpy_extras.io_utils import ImportHelper
+
+from . import workflow
+
+
+class VIOLET_OT_import_pmx(bpy.types.Operator, ImportHelper):
+    bl_idname = "violet.import_pmx"
+    bl_label = "Import Violet PMX"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".pmx"
+
+    filter_glob: StringProperty(default="*.pmx", options={'HIDDEN'})
+    scale: FloatProperty(name="Scale", default=0.08, min=0.00001, soft_max=10.0)
+    import_physics: BoolProperty(name="Import Physics Data", default=False,
+                                description="Import rigid bodies and joints; simulation is built separately in MMD Tools")
+    pack_textures: BoolProperty(name="Pack Textures", default=False,
+                               description="Store available textures inside the blend file")
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        try:
+            root, report = workflow.import_pmx(context, self.filepath, self.scale,
+                                               self.import_physics, self.pack_textures)
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self.report({'ERROR'}, "PMX import failed: " + str(exc))
+            return {'CANCELLED'}
+        missing = len(report['missing_textures'])
+        self.report({'WARNING'} if missing else {'INFO'},
+                    f"Imported {root.name}: {report['material_count']} materials, {missing} missing textures")
+        return {'FINISHED'}
+
+
+class VIOLET_OT_organize_materials(bpy.types.Operator):
+    bl_idname = "violet.organize_materials"
+    bl_label = "Organize Materials"
+    bl_description = "Repair texture paths, reuse compatible images and update the material report"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return workflow.model_root(context.object) is not None and context.mode == 'OBJECT'
+
+    def execute(self, context):
+        root = workflow.model_root(context.object)
+        report = workflow.organize_materials(root, context.scene.violet_texture_directory)
+        missing = len(report['missing_textures'])
+        self.report({'WARNING'} if missing else {'INFO'},
+                    f"Repaired {report['repaired_textures']} textures, reused {report['reused_images']} images; {missing} missing")
+        return {'FINISHED'}
+
+
+class VIOLET_OT_pack_textures(bpy.types.Operator):
+    bl_idname = "violet.pack_textures"
+    bl_label = "Pack Model Textures"
+    bl_description = "Pack only this model's available images for a portable blend file"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return workflow.model_root(context.object) is not None and context.mode == 'OBJECT'
+
+    def execute(self, context):
+        packed, failures = workflow.pack_textures(workflow.model_root(context.object))
+        self.report({'WARNING'} if failures else {'INFO'},
+                    f"Packed {packed} images; {len(failures)} unavailable")
+        return {'FINISHED'}
+
+
+class VIOLET_OT_material_report(bpy.types.Operator):
+    bl_idname = "violet.material_report"
+    bl_label = "View Material Report"
+    bl_description = "Show material slots, texture paths and missing textures in the Text Editor"
+
+    @classmethod
+    def poll(cls, context):
+        return context.area is not None and workflow.model_root(context.object) is not None
+
+    def execute(self, context):
+        root = workflow.model_root(context.object)
+        workflow.write_report(root, workflow.audit_materials(root))
+        context.area.type = 'TEXT_EDITOR'
+        context.area.spaces.active.text = bpy.data.texts[root['violet_material_report']]
+        return {'FINISHED'}
+
+
+class VIOLET_PT_pmx(bpy.types.Panel):
+    bl_label = "PMX & Materials"
+    bl_idname = "VIOLET_PT_pmx"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Violet"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("violet.import_pmx", text="Import PMX", icon='IMPORT')
+        root = workflow.model_root(context.object)
+        if root is None:
+            layout.label(text="Select an imported model")
+            return
+        layout.label(text=root.mmd_root.name or root.name, icon='OUTLINER_OB_ARMATURE')
+        layout.prop(context.scene, "violet_texture_directory", text="Texture Folder")
+        layout.operator("violet.organize_materials", icon='MATERIAL')
+        layout.operator("violet.pack_textures", icon='PACKAGE')
+        layout.label(text=f"Missing textures: {root.get('violet_missing_textures', 0)}",
+                     icon='ERROR' if root.get('violet_missing_textures', 0) else 'CHECKMARK')
+        layout.operator("violet.material_report", icon='TEXT')
+        obj = context.object
+        if obj.type == 'MESH':
+            layout.template_list("MATERIAL_UL_matslots", "violet", obj, "material_slots",
+                                 obj, "active_material_index", rows=4)
+            if obj.active_material:
+                layout.prop(obj.active_material, "name", text="Material")
+                layout.label(text="PMX: " + obj.active_material.get(
+                    "violet_pmx_name_j", obj.active_material.mmd_material.name_j))
+
+
+def menu_import(self, context):
+    self.layout.operator(VIOLET_OT_import_pmx.bl_idname, text="Violet PMX (.pmx)")
+
+
+CLASSES = (VIOLET_OT_import_pmx, VIOLET_OT_organize_materials, VIOLET_OT_pack_textures,
+           VIOLET_OT_material_report, VIOLET_PT_pmx)
+
+
+def register():
+    # One switch for the Violet UI and its bundled, offline PMX dependency.
+    if not addon_utils.check("mmd_tools")[1]:
+        if addon_utils.enable("mmd_tools", default_set=True, persistent=True) is None:
+            raise RuntimeError("Enable the bundled MMD Tools before Violet PMX")
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
+    bpy.types.Scene.violet_texture_directory = StringProperty(
+        name="Texture Folder", subtype='DIR_PATH',
+        description="Optional folder to search recursively for missing textures; ambiguous names are left unresolved")
+    bpy.types.TOPBAR_MT_file_import.append(menu_import)
+
+
+def unregister():
+    bpy.types.TOPBAR_MT_file_import.remove(menu_import)
+    del bpy.types.Scene.violet_texture_directory
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)
