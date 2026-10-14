@@ -2,21 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 bl_info = {
-    "name": "Violet PMX Import & Materials",
+    "name": "Violet PMX, VMD & Materials",
     "author": "VioletBlender contributors",
-    "version": (0, 2, 0),
+    "version": (0, 3, 0),
     "blender": (4, 2, 0),
     "location": "File > Import; 3D View > Sidebar > Violet",
-    "description": "Import PMX models and organize their materials and textures",
+    "description": "Import PMX models and VMD motion; organize materials and textures",
     "category": "Import-Export",
 }
 
 import addon_utils
 import bpy
-from bpy.props import BoolProperty, FloatProperty, StringProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import workflow
+from . import motion, workflow
 
 
 class VIOLET_OT_import_pmx(bpy.types.Operator, ImportHelper):
@@ -48,6 +48,67 @@ class VIOLET_OT_import_pmx(bpy.types.Operator, ImportHelper):
         missing = len(report['missing_textures'])
         self.report({'WARNING'} if missing else {'INFO'},
                     f"Imported {root.name}: {report['material_count']} materials, {missing} missing textures")
+        return {'FINISHED'}
+
+
+class VIOLET_OT_import_vmd(bpy.types.Operator, ImportHelper):
+    bl_idname = "violet.import_vmd"
+    bl_label = "Import Violet VMD Motion"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".vmd"
+
+    filter_glob: StringProperty(default="*.vmd", options={'HIDDEN'})
+    start_frame: IntProperty(name="Start Frame", default=1, min=0)
+    use_model_scale: BoolProperty(name="Use PMX Import Scale", default=True)
+    scale: FloatProperty(name="Scale Override", default=0.08, min=0.00001, soft_max=10.0,
+                         precision=4)
+    update_timeline: BoolProperty(name="Update Timeline Range", default=True)
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and workflow.model_root(context.object) is not None
+
+    def execute(self, context):
+        root = workflow.model_root(context.object)
+        try:
+            report = motion.import_vmd(
+                context, root, self.filepath,
+                start_frame=self.start_frame,
+                override_scale=not self.use_model_scale,
+                scale=self.scale,
+                update_timeline=self.update_timeline,
+            )
+        except motion.NoMatchingChannels as exc:
+            motion.write_motion_report(root, exc.report)
+            self.report({'ERROR'}, str(exc) + "; see View Motion Report")
+            return {'CANCELLED'}
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self.report({'ERROR'}, "VMD import failed: " + str(exc))
+            return {'CANCELLED'}
+        unmatched = len(report['unmatched_bones']) + len(report['unmatched_morphs'])
+        self.report({'WARNING'} if unmatched else {'INFO'},
+                    f"Imported motion to {len(report['imported_targets'])} targets; "
+                    f"{unmatched} unmatched channels")
+        return {'FINISHED'}
+
+
+class VIOLET_OT_motion_report(bpy.types.Operator):
+    bl_idname = "violet.motion_report"
+    bl_label = "View Motion Report"
+    bl_description = "Show VMD import details and unmatched channels in a separate Text report"
+
+    @classmethod
+    def poll(cls, context):
+        root = workflow.model_root(context.object)
+        report_name = root.get('violet_vmd_report') if root is not None else None
+        return context.area is not None and report_name is not None and report_name in bpy.data.texts
+
+    def execute(self, context):
+        root = workflow.model_root(context.object)
+        context.area.type = 'TEXT_EDITOR'
+        context.area.spaces.active.text = bpy.data.texts[root['violet_vmd_report']]
         return {'FINISHED'}
 
 
@@ -119,6 +180,23 @@ class VIOLET_PT_pmx(bpy.types.Panel):
             layout.label(text="Select an imported model")
             return
         layout.label(text=root.mmd_root.name or root.name, icon='OUTLINER_OB_ARMATURE')
+        layout.separator()
+        layout.label(text="Motion")
+        layout.prop(context.scene, "violet_vmd_start_frame", text="Start Frame")
+        layout.prop(context.scene, "violet_vmd_use_model_scale", text="Use PMX Scale")
+        if not context.scene.violet_vmd_use_model_scale:
+            layout.prop(context.scene, "violet_vmd_scale", text="Scale")
+        layout.prop(context.scene, "violet_vmd_update_timeline", text="Update Timeline")
+        op = layout.operator("violet.import_vmd", text="Import VMD", icon='ACTION')
+        op.start_frame = context.scene.violet_vmd_start_frame
+        op.use_model_scale = context.scene.violet_vmd_use_model_scale
+        op.scale = context.scene.violet_vmd_scale
+        op.update_timeline = context.scene.violet_vmd_update_timeline
+        report_name = root.get('violet_vmd_report')
+        if report_name is not None and report_name in bpy.data.texts:
+            layout.operator("violet.motion_report", icon='TEXT')
+        layout.separator()
+        layout.label(text="Materials")
         layout.prop(context.scene, "violet_texture_directory", text="Texture Folder")
         layout.operator("violet.organize_materials", icon='MATERIAL')
         layout.operator("violet.pack_textures", icon='PACKAGE')
@@ -139,7 +217,8 @@ def menu_import(self, context):
     self.layout.operator(VIOLET_OT_import_pmx.bl_idname, text="Violet PMX (.pmx)")
 
 
-CLASSES = (VIOLET_OT_import_pmx, VIOLET_OT_organize_materials, VIOLET_OT_pack_textures,
+CLASSES = (VIOLET_OT_import_pmx, VIOLET_OT_import_vmd, VIOLET_OT_motion_report,
+           VIOLET_OT_organize_materials, VIOLET_OT_pack_textures,
            VIOLET_OT_material_report, VIOLET_PT_pmx)
 
 
@@ -153,11 +232,27 @@ def register():
     bpy.types.Scene.violet_texture_directory = StringProperty(
         name="Texture Folder", subtype='DIR_PATH',
         description="Optional folder to search recursively for missing textures; ambiguous names are left unresolved")
+    bpy.types.Scene.violet_vmd_start_frame = IntProperty(
+        name="VMD Start Frame", default=1, min=0,
+        description="Place VMD frame 0 at this Blender frame")
+    bpy.types.Scene.violet_vmd_use_model_scale = BoolProperty(
+        name="Use PMX Import Scale", default=True,
+        description="Read the scale saved when the selected PMX model was imported")
+    bpy.types.Scene.violet_vmd_scale = FloatProperty(
+        name="VMD Scale", default=0.08, min=0.00001, soft_max=10.0, precision=4,
+        description="Scale factor used when the PMX import scale is not available or is overridden")
+    bpy.types.Scene.violet_vmd_update_timeline = BoolProperty(
+        name="Update Timeline Range", default=True,
+        description="Set the scene range to the imported bone and vertex morph keys")
     bpy.types.TOPBAR_MT_file_import.append(menu_import)
 
 
 def unregister():
     bpy.types.TOPBAR_MT_file_import.remove(menu_import)
+    del bpy.types.Scene.violet_vmd_update_timeline
+    del bpy.types.Scene.violet_vmd_scale
+    del bpy.types.Scene.violet_vmd_use_model_scale
+    del bpy.types.Scene.violet_vmd_start_frame
     del bpy.types.Scene.violet_texture_directory
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
