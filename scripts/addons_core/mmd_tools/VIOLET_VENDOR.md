@@ -21,6 +21,8 @@ VioletBlender changes:
   the original ten toon textures.
 - Use `surface_render_method` for overlapping-face transparency on Blender
   4.2+; retain the older API fallback.
+- Mark missing-image placeholders so Violet can reload textures restored at
+  their original path instead of reusing a cached blank image.
 
 The separate `violet_pmx` add-on owns the Violet workflow. Keep upstream fixes
 small and document changes here when upgrading the pinned release.

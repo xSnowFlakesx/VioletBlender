@@ -206,6 +206,7 @@ class FnMaterial:
                 img = bpy.data.images.new(os.path.basename(filepath), 1, 1)
                 img.source = "FILE"
                 img.filepath = filepath
+                img["violet_missing_texture"] = True
             use_alpha = img.depth == 32 and img.file_format != "BMP"
             if hasattr(img, "use_alpha"):
                 img.use_alpha = use_alpha
@@ -231,6 +232,7 @@ class FnMaterial:
                     image = bpy.data.images.new(name, width=1, height=32)
                     image.pixels[:] = [c for y in range(32)
                                        for c in ((0.65 if y < 16 else 1.0),) * 3 + (1.0,)]
+                    image.pack()
                 node = self.__get_texture_node("mmd_toon_tex")
                 if node is None:
                     self.__update_shader_nodes()

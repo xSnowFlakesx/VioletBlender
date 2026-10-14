@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import struct
 import tempfile
 from unittest.mock import patch
 
@@ -193,11 +194,27 @@ def main():
         second_materials = workflow.model_materials(second)
         assert not set(second_materials).intersection(materials)
         assert second.mmd_root.material_morphs['透明'].data[0].material == second_materials[1].name
+        # A file restored at its original path must replace the cached blank placeholder.
+        restored = directory / 'textures/missing.png'
+        restored.write_bytes((directory / 'textures/共享.png').read_bytes())
+        report = workflow.organize_materials(second)
+        assert report['repaired_textures'] == 1 and not report['missing_textures'], report
+        repaired_image = second_materials[2].node_tree.nodes['mmd_base_tex'].image
+        assert repaired_image.size[:] == (2, 2) and not repaired_image.get('violet_missing_texture', False)
 
         # Invalid files, and a failure after scene creation, leave no partial model.
         broken = directory / 'broken.pmx'
         broken.write_bytes(filepath.read_bytes()[:100])
         before = snapshot()
+        unsupported = directory / 'pmx21.pmx'
+        payload = filepath.read_bytes()
+        unsupported.write_bytes(payload[:4] + struct.pack('<f', 2.1) + payload[8:])
+        try:
+            workflow.import_pmx(bpy.context, str(unsupported))
+            raise AssertionError('Unsupported PMX 2.1 was accepted')
+        except pmx.UnsupportedVersionError:
+            pass
+        assert snapshot() == before
         try:
             workflow.import_pmx(bpy.context, str(broken))
             raise AssertionError('Truncated PMX was accepted')
@@ -212,11 +229,12 @@ def main():
 
         with patch.object(PMXImporter, 'execute', fail_after_import):
             try:
-                workflow.import_pmx(bpy.context, str(filepath))
+                workflow.import_pmx(bpy.context, str(filepath), import_physics=True)
                 raise AssertionError('Expected injected failure')
             except RuntimeError as exc:
                 assert str(exc) == 'injected post-import failure'
         assert snapshot() == before
+        assert bpy.context.scene.rigidbody_world is None
         packed, failures = workflow.pack_textures(root)
         assert packed > 0 and not failures, failures
         saved_root_name = root.name

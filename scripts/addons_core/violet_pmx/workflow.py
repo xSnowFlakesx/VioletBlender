@@ -82,7 +82,8 @@ def organize_materials(root, search_directory=""):
 
     images = {}
     for image in bpy.data.images:
-        if image.source == "FILE" and os.path.isfile(_texture_path(image)):
+        if (image.source == "FILE" and os.path.isfile(_texture_path(image))
+                and not image.get("violet_missing_texture", False)):
             key = (_canonical(_texture_path(image)), _image_settings(image))
             images.setdefault(key, image)
 
@@ -117,7 +118,7 @@ def organize_materials(root, search_directory=""):
                 canonical_image.alpha_mode = image.alpha_mode
                 canonical_image.use_view_as_render = image.use_view_as_render
                 images[key] = canonical_image
-            if not os.path.isfile(_texture_path(image)):
+            if not os.path.isfile(_texture_path(image)) or image.get("violet_missing_texture", False):
                 repaired += 1
             elif canonical_image != image:
                 reused += 1
@@ -152,7 +153,8 @@ def audit_materials(root):
                 image = node.image
                 path = _texture_path(image) if image.source == "FILE" else ""
                 status = "packed" if _is_packed(image) else (
-                    "generated" if image.source != "FILE" else ("found" if os.path.isfile(path) else "missing"))
+                    "generated" if image.source != "FILE" else (
+                        "found" if os.path.isfile(path) and not image.get("violet_missing_texture", False) else "missing"))
                 if status == "missing":
                     missing.add(path)
                 textures.append({"role": node.label or node.name, "image": image.name,
@@ -188,7 +190,8 @@ def pack_textures(root):
     for image in images:
         if _is_packed(image):
             continue
-        if image.source == "FILE" and not os.path.isfile(_texture_path(image)):
+        if image.source == "FILE" and (not os.path.isfile(_texture_path(image))
+                                       or image.get("violet_missing_texture", False)):
             failures.append(image.filepath)
             continue
         try:
@@ -239,6 +242,7 @@ def import_pmx(context, filepath, scale=0.08, import_physics=False, pack=False):
     active_collection = context.view_layer.active_layer_collection
     active_object = context.view_layer.objects.active
     selected = list(context.selected_objects)
+    had_physics_world = context.scene.rigidbody_world is not None
     try:
         collection = bpy.data.collections.new("PMX - " + (model.name or Path(filepath).stem))
         context.scene.collection.children.link(collection)
@@ -270,6 +274,8 @@ def import_pmx(context, filepath, scale=0.08, import_physics=False, pack=False):
     except Exception:
         if context.object and context.object.mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
+        if not had_physics_world and context.scene.rigidbody_world is not None:
+            bpy.ops.rigidbody.world_remove()
         for data, before in zip(collections, snapshots):
             for item in set(data) - before:
                 data.remove(item, do_unlink=True)
