@@ -3,11 +3,11 @@ name: PMX import and materials on Windows
 on:
   workflow_dispatch:
   push:
-    branches: [mmd-main, codex/pmx-material-workflow]
+    branches: [mmd-main, codex/pmx-material-workflow, codex/pmx-material-refinements]
     paths:
       - 'scripts/addons_core/mmd_tools/**'
       - 'scripts/addons_core/violet_pmx/**'
-      - 'tests/python/violet_pmx_test.py'
+      - 'tests/python/violet_pmx*.py'
       - 'build_files/utils/package_violet_pmx.py'
       - '.github/workflows/pmx-validation.yml'
 
@@ -75,6 +75,8 @@ jobs:
           }
           & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_pmx_test.py 2>&1 | Tee-Object -FilePath pmx-validation.log
           if ($LASTEXITCODE -ne 0) { throw "PMX validation failed: $LASTEXITCODE" }
+          & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_pmx_model_check_test.py 2>&1 | Tee-Object -FilePath pmx-model-check-validation.log
+          if ($LASTEXITCODE -ne 0) { throw "PMX model-check CLI validation failed: $LASTEXITCODE" }
 
       - name: Package offline add-ons and record portable build provenance
         shell: pwsh
@@ -85,6 +87,7 @@ jobs:
           python build_files/utils/package_violet_pmx.py --output "$env:RUNNER_TEMP/pmx-addon"
           if ($LASTEXITCODE -ne 0) { throw 'Add-on packaging failed' }
           Copy-Item doc/guides/violet_pmx.md "$env:RUNNER_TEMP/violet-base/Violet-PMX-Guide.md"
+          Copy-Item tests/python/violet_pmx_model_check.py "$env:RUNNER_TEMP/violet-base/violet_pmx_model_check.py"
           @{
             executable_source_sha = $env:VIOLET_BASE_SHA
             executable_build_run = $env:VIOLET_BASE_RUN
@@ -112,6 +115,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PMX-validation-log-${{ github.sha }}
-          path: pmx-validation.log
+          path: |
+            pmx-validation.log
+            pmx-model-check-validation.log
           if-no-files-found: warn
           retention-days: 14

@@ -36,6 +36,11 @@ def close(actual, expected):
     assert all(abs(a - b) < 1e-5 for a, b in zip(actual, expected)), (actual, expected)
 
 
+def close_alpha(actual, expected):
+    # The fixture PNG stores alpha in 8 bits, so 0.5 is quantized to 128/255.
+    assert abs(float(actual) - expected) < 0.02, (actual, expected)
+
+
 def make_fixture(directory):
     texture_dir = directory / 'textures'
     texture_dir.mkdir()
@@ -158,6 +163,11 @@ def main():
         close([materials[1].node_tree.nodes['mmd_shader'].inputs['Alpha'].default_value], [0.5])
         report = workflow.audit_materials(root)
         assert report['material_count'] == 3 and len(report['missing_textures']) == 1, report
+        first_report = report['materials'][0]
+        assert first_report['textures'][0]['alpha_mode'] == materials[0].node_tree.nodes['mmd_base_tex'].image.alpha_mode
+        assert first_report['shader_alpha'] == {'default': 1.0, 'linked': False}, first_report
+        assert first_report['shader_base_alpha']['linked'] is True, first_report
+        assert first_report['render_method'] is not None, first_report
         assert obj.users_collection[0].name.startswith('PMX - ')
         before_slots = list(mesh.materials)
         before_indices = [face.material_index for face in mesh.polygons]
@@ -166,27 +176,47 @@ def main():
         assert [face.material_index for face in mesh.polygons] == before_indices
         assert list(cube.data.materials) == cube_materials
 
-        # Two matching basenames are ambiguous, so no unrelated texture is substituted.
+        # A match at the search root and one in a child are ambiguous.
         repair_dir = directory / 'repair'
-        for subdir in ('a', 'b'):
-            target = repair_dir / subdir
-            target.mkdir(parents=True)
-            (target / 'missing.png').write_bytes((directory / 'textures/共享.png').read_bytes())
+        repair_dir.mkdir()
+        root_match = repair_dir / 'missing.png'
+        root_match.write_bytes((directory / 'textures/共享.png').read_bytes())
+        child_match = repair_dir / 'other' / 'missing.png'
+        child_match.parent.mkdir()
+        child_match.write_bytes((directory / 'textures/共享.png').read_bytes())
         report = workflow.organize_materials(root, str(repair_dir))
         assert len(report['missing_textures']) == 1
-        (repair_dir / 'b/missing.png').unlink()
+        assert len(report['ambiguous_textures']) == 1, report
+        assert set(report['ambiguous_textures'][0]['candidates']) == {str(root_match), str(child_match)}
+        (repair_dir / 'other/missing.png').unlink()
+        # A real image with explicit NONE at this path must not be reused for
+        # the blank missing-file placeholder's automatic NONE.
+        real_none = bpy.data.images.load(str(root_match), check_existing=False)
+        real_none.alpha_mode = 'NONE'
         report = workflow.organize_materials(root, str(repair_dir))
         assert not report['missing_textures'] and report['repaired_textures'] == 1, report
+        repaired_image = materials[2].node_tree.nodes['mmd_base_tex'].image
+        assert repaired_image.alpha_mode == 'STRAIGHT', repaired_image.alpha_mode
+        assert repaired_image != real_none and real_none.alpha_mode == 'NONE'
+        close_alpha(repaired_image.pixels[3], 0.5)
         assert not workflow.organize_materials(root, str(repair_dir))['repaired_textures']
 
         # An image with a deliberately different color space must not be consolidated.
         image_node = materials[1].node_tree.nodes['mmd_base_tex']
         different = image_node.image.copy()
         different.colorspace_settings.name = 'Non-Color'
+        different.alpha_mode = 'PREMUL'
         image_node.image = different
         workflow.organize_materials(root)
         assert image_node.image == different
+        assert image_node.image.alpha_mode == 'PREMUL'
         assert image_node.image != materials[0].node_tree.nodes['mmd_base_tex'].image
+        none_node = materials[0].node_tree.nodes['mmd_base_tex']
+        explicit_none = none_node.image.copy()
+        explicit_none.alpha_mode = 'NONE'
+        none_node.image = explicit_none
+        workflow.organize_materials(root)
+        assert none_node.image.alpha_mode == 'NONE'
 
         # Independent reimport preserves both models and material morph targets.
         second, _ = workflow.import_pmx(bpy.context, str(filepath))
@@ -194,13 +224,33 @@ def main():
         second_materials = workflow.model_materials(second)
         assert not set(second_materials).intersection(materials)
         assert second.mmd_root.material_morphs['透明'].data[0].material == second_materials[1].name
-        # A file restored at its original path must replace the cached blank placeholder.
-        restored = directory / 'textures/missing.png'
-        restored.write_bytes((directory / 'textures/共享.png').read_bytes())
-        report = workflow.organize_materials(second)
+        # The PMX exact relative path wins even when its basename is duplicated.
+        exact_dir = directory / 'exact-search'
+        exact_match = exact_dir / 'textures' / 'missing.png'
+        exact_match.parent.mkdir(parents=True)
+        exact_match.write_bytes((directory / 'textures/共享.png').read_bytes())
+        (exact_dir / 'missing.png').write_bytes((directory / 'textures/共享.png').read_bytes())
+        duplicate = exact_dir / 'other' / 'missing.png'
+        duplicate.parent.mkdir()
+        duplicate.write_bytes((directory / 'textures/共享.png').read_bytes())
+        report = workflow.organize_materials(second, str(exact_dir))
         assert report['repaired_textures'] == 1 and not report['missing_textures'], report
-        repaired_image = second_materials[2].node_tree.nodes['mmd_base_tex'].image
-        assert repaired_image.size[:] == (2, 2) and not repaired_image.get('violet_missing_texture', False)
+        assert not report['ambiguous_textures'], report
+        exact_image = second_materials[2].node_tree.nodes['mmd_base_tex'].image
+        assert workflow._canonical(bpy.path.abspath(exact_image.filepath)) == workflow._canonical(exact_match)
+        assert exact_image.alpha_mode == 'STRAIGHT'
+        close_alpha(exact_image.pixels[3], 0.5)
+        # A missing placeholder with a user-selected PREMUL mode keeps it.
+        node2 = second_materials[2].node_tree.nodes['mmd_base_tex']
+        premul_placeholder = bpy.data.images.new('explicit-premul-missing', 1, 1)
+        premul_placeholder.source = 'FILE'
+        premul_placeholder.filepath = str(directory / 'textures/not-yet-restored.png')
+        premul_placeholder['violet_missing_texture'] = True
+        premul_placeholder.alpha_mode = 'PREMUL'
+        node2.image = premul_placeholder
+        report = workflow.organize_materials(second, str(exact_dir))
+        assert report['repaired_textures'] == 1 and not report['missing_textures'], report
+        assert node2.image.alpha_mode == 'PREMUL', node2.image.alpha_mode
 
         # Invalid files, and a failure after scene creation, leave no partial model.
         broken = directory / 'broken.pmx'
@@ -244,32 +294,69 @@ def main():
             path.unlink()
         bpy.ops.wm.open_mainfile(filepath=str(blend_path))
         root = bpy.data.objects[saved_root_name]
+        materials = workflow.model_materials(root)
         assert not workflow.audit_materials(root)['missing_textures']
+        packed_restored = materials[2].node_tree.nodes['mmd_base_tex'].image
+        assert workflow._is_packed(packed_restored) and packed_restored.alpha_mode == 'STRAIGHT'
+        close_alpha(packed_restored.pixels[3], 0.5)
         assert len(workflow.model_meshes(root)[0].data.shape_keys.key_blocks) == 2
         text = bpy.data.texts[root['violet_material_report']]
         assert json.loads(text.as_string())['material_count'] == 3
-        # Prove the shader can compile and render, beyond checking its node metadata.
+        # Prove both PMX alpha and texture alpha survive pack/save/reload in an
+        # isolated render, without coincident faces or edge pixels in the sample.
         bpy.context.scene.render.engine = 'CYCLES'
         bpy.context.scene.cycles.device = 'CPU'
-        bpy.context.scene.cycles.samples = 1
+        bpy.context.scene.cycles.samples = 64
+        bpy.context.scene.cycles.seed = 0
+        bpy.context.scene.cycles.use_animated_seed = False
         bpy.context.scene.cycles.use_denoising = False
-        bpy.context.scene.render.resolution_x = bpy.context.scene.render.resolution_y = 32
+        bpy.context.scene.render.film_transparent = True
+        bpy.context.scene.render.resolution_x = bpy.context.scene.render.resolution_y = 128
         bpy.context.scene.render.resolution_percentage = 100
         for scene_object in bpy.context.scene.objects:
-            if scene_object.type == 'MESH':
-                scene_object.hide_render = scene_object != workflow.model_meshes(root)[0]
+            scene_object.hide_render = True
         camera = bpy.context.scene.camera
-        camera.location = (0.12, -0.5, 0.15)
-        from mathutils import Vector
-        camera.rotation_euler = (Vector((0.12, 0, 0.04)) - camera.location).to_track_quat('-Z', 'Y').to_euler()
-        bpy.context.scene.render.filepath = str(directory / 'preview.png')
+        camera.location = (0, 0, 4)
+        camera.rotation_euler = (0, 0, 0)
+        camera.data.type = 'ORTHO'
+        camera.data.ortho_scale = 4
+        mesh = bpy.data.meshes.new('alpha-isolated-triangles')
+        mesh.from_pydata([(-1.6, -0.8, 0), (-0.4, -0.8, 0), (-1, 0.8, 0),
+                          (0.4, -0.8, 0), (1.6, -0.8, 0), (1, 0.8, 0)], [],
+                         [(0, 1, 2), (3, 4, 5)])
+        mesh.materials.append(materials[2])
+        mesh.materials.append(materials[1])
+        mesh.polygons[1].material_index = 1
+        uv = mesh.uv_layers.new(name='UVMap')
+        for polygon in mesh.polygons:
+            for loop_index in polygon.loop_indices:
+                uv.data[loop_index].uv = (0.5, 0.5)
+        test_object = bpy.data.objects.new('isolated-alpha-check', mesh)
+        bpy.context.scene.collection.objects.link(test_object)
+        test_object.hide_render = False
+        preview_path = directory / 'alpha-preview.png'
+        bpy.context.scene.render.image_settings.file_format = 'PNG'
+        bpy.context.scene.render.image_settings.color_mode = 'RGBA'
+        bpy.context.scene.render.filepath = str(preview_path)
         bpy.ops.render.render(write_still=True)
-        assert (directory / 'preview.png').stat().st_size > 0
-        preview = bpy.data.images.load(str(directory / 'preview.png'))
-        red = list(preview.pixels)[::4]
-        assert max(red) - min(red) > 0.01
+        result = bpy.data.images.load(str(preview_path), check_existing=False)
+        result_pixels = list(result.pixels)
+        render_width, render_height = result.size[:]
+        assert len(result_pixels) == render_width * render_height * 4, (result.size[:], len(result_pixels))
+        def alpha_mean(world_x, world_y=0):
+            radius = 0.16
+            x0 = int(((world_x - radius) / camera.data.ortho_scale + 0.5) * render_width)
+            x1 = int(((world_x + radius) / camera.data.ortho_scale + 0.5) * render_width)
+            y0 = int(((world_y - radius) / camera.data.ortho_scale + 0.5) * render_height)
+            y1 = int(((world_y + radius) / camera.data.ortho_scale + 0.5) * render_height)
+            values = [result_pixels[(y * render_width + x) * 4 + 3]
+                      for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)]
+            return sum(values) / len(values)
+        close_alpha(alpha_mean(-1), 0.5)
+        close_alpha(alpha_mean(1), 0.25)
         print('VIOLET_PMX_OK: geometry, UV, normals, bones, weights, morphs, materials, textures, rollback, save/load, render')
         print('VIOLET_PMX_BLENDER_VERSION:', bpy.app.version_string)
 
 
-main()
+if __name__ == '__main__':
+    main()

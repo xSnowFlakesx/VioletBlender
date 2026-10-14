@@ -57,14 +57,48 @@ def _texture_candidates(root, material, node, search_directory):
     relative = getattr(material.mmd_material, relative_property, "") if relative_property else ""
     relative = relative.replace("\\", "/")
     raw = node.image.filepath.replace("\\", "/")
-    candidates = [_texture_path(node.image)]
+    exact = [_texture_path(node.image)]
     for directory in (source_dir, search_directory):
         if not directory:
             continue
         if relative:
-            candidates.append(os.path.join(directory, relative))
-        candidates.append(os.path.join(directory, os.path.basename(raw)))
-    return candidates
+            exact.append(os.path.join(directory, relative))
+    return _unique_paths(exact), os.path.basename(relative or raw)
+
+
+def _unique_paths(paths):
+    unique = []
+    seen = set()
+    for path in paths:
+        if not path:
+            continue
+        canonical = _canonical(path)
+        if canonical not in seen:
+            seen.add(canonical)
+            unique.append(path)
+    return unique
+
+
+def _texture_index(search_directory):
+    index = {}
+    if search_directory and os.path.isdir(search_directory):
+        # os.walk yields the search root itself before its descendants.
+        for directory, _, filenames in os.walk(search_directory):
+            filenames.sort(key=str.casefold)
+            for filename in filenames:
+                index.setdefault(filename.casefold(), []).append(os.path.join(directory, filename))
+    return {name: _unique_paths(paths) for name, paths in index.items()}
+
+
+def _resolve_texture(root, material, node, search_directory, search_index):
+    exact, basename = _texture_candidates(root, material, node, search_directory)
+    resolved = next((path for path in exact if os.path.isfile(path)), None)
+    if resolved:
+        return resolved, []
+    matches = search_index.get(basename.casefold(), []) if basename else []
+    if len(matches) == 1:
+        return matches[0], []
+    return None, matches if len(matches) > 1 else []
 
 
 def organize_materials(root, search_directory=""):
@@ -74,11 +108,8 @@ def organize_materials(root, search_directory=""):
     node links, PMX IDs and morph references are never reordered or recreated.
     """
     search_directory = bpy.path.abspath(search_directory) if search_directory else ""
-    search_index = {}
-    if search_directory and os.path.isdir(search_directory):
-        for directory, _, filenames in os.walk(search_directory):
-            for filename in filenames:
-                search_index.setdefault(filename.casefold(), []).append(os.path.join(directory, filename))
+    root["violet_texture_search_directory"] = search_directory
+    search_index = _texture_index(search_directory)
 
     images = {}
     for image in bpy.data.images:
@@ -99,25 +130,40 @@ def organize_materials(root, search_directory=""):
             image = node.image
             if image.source != "FILE" or _is_packed(image):
                 continue
-            candidates = _texture_candidates(root, material, node, search_directory)
-            resolved = next((path for path in candidates if os.path.isfile(path)), None)
-            if not resolved and search_index:
-                matches = search_index.get(os.path.basename(image.filepath.replace("\\", "/")).casefold(), [])
-                if len(matches) == 1:
-                    resolved = matches[0]
+            resolved, _ = _resolve_texture(root, material, node, search_directory, search_index)
             if not resolved:
                 continue
-            key = (_canonical(resolved), _image_settings(image))
-            canonical_image = images.get(key)
-            if canonical_image is None:
+            settings = list(_image_settings(image))
+            # MMD Tools marks its blank missing-file image with alpha_mode NONE.
+            # When that file returns, use the decoded image's alpha convention;
+            # a real source image's NONE/PREMUL setting remains authoritative.
+            automatic_missing_alpha = (image.get("violet_missing_texture", False)
+                                       and image.alpha_mode == "NONE")
+            probe_image = None
+            if automatic_missing_alpha:
                 try:
-                    canonical_image = bpy.data.images.load(resolved, check_existing=False)
+                    probe_image = bpy.data.images.load(resolved, check_existing=False)
                 except RuntimeError:
                     continue
-                canonical_image.colorspace_settings.name = image.colorspace_settings.name
-                canonical_image.alpha_mode = image.alpha_mode
+                settings[1] = probe_image.alpha_mode
+            key = (_canonical(resolved), tuple(settings))
+            canonical_image = images.get(key)
+            if canonical_image is None:
+                if automatic_missing_alpha:
+                    canonical_image = probe_image
+                else:
+                    try:
+                        canonical_image = bpy.data.images.load(resolved, check_existing=False)
+                    except RuntimeError:
+                        continue
+                canonical_image.colorspace_settings.name = settings[0]
+                if not automatic_missing_alpha:
+                    canonical_image.alpha_mode = settings[1]
                 canonical_image.use_view_as_render = image.use_view_as_render
                 images[key] = canonical_image
+            elif probe_image:
+                # The probe was only needed to determine native alpha handling.
+                bpy.data.images.remove(probe_image)
             if not os.path.isfile(_texture_path(image)) or image.get("violet_missing_texture", False):
                 repaired += 1
             elif canonical_image != image:
@@ -127,14 +173,30 @@ def organize_materials(root, search_directory=""):
             if node.name == "mmd_toon_tex" and not material.mmd_material.is_shared_toon_texture:
                 material.mmd_material.toon_texture = resolved
 
-    report = audit_materials(root)
+    report = audit_materials(root, search_directory)
     report.update(repaired_textures=repaired, reused_images=reused)
     write_report(root, report)
     return report
 
 
-def audit_materials(root):
+def _socket_report(node, name):
+    socket = node.inputs.get(name) if node else None
+    if socket is None:
+        return None
+    value = socket.default_value
+    if isinstance(value, (float, int)):
+        value = float(value)
+    elif hasattr(value, "__iter__"):
+        value = [float(component) for component in value]
+    return {"default": value, "linked": socket.is_linked}
+
+
+def audit_materials(root, search_directory=""):
     meshes = model_meshes(root)
+    if not search_directory:
+        search_directory = root.get("violet_texture_search_directory", "")
+    search_directory = bpy.path.abspath(search_directory) if search_directory else ""
+    search_index = _texture_index(search_directory)
     material_slots = {}
     for obj in meshes:
         face_counts = Counter(face.material_index for face in obj.data.polygons)
@@ -144,6 +206,7 @@ def audit_materials(root):
                     {"mesh": obj.name, "slot": index, "faces": face_counts[index]})
     rows = []
     missing = set()
+    ambiguous = []
     for material in model_materials(root):
         textures = []
         if material.node_tree:
@@ -159,16 +222,33 @@ def audit_materials(root):
                     missing.add(path)
                 textures.append({"role": node.label or node.name, "image": image.name,
                                  "path": path, "status": status,
-                                 "color_space": image.colorspace_settings.name})
+                                 "color_space": image.colorspace_settings.name,
+                                 "alpha_mode": image.alpha_mode})
+                if status == "missing" and search_index:
+                    candidates = _resolve_texture(root, material, node, search_directory,
+                                                  search_index)[1]
+                    if candidates:
+                        ambiguous.append({"material": material.name,
+                                          "role": node.label or node.name,
+                                          "image": image.name,
+                                          "basename": os.path.basename(path or image.filepath),
+                                          "candidates": candidates})
+        shader = material.node_tree.nodes.get("mmd_shader") if material.node_tree else None
+        render_property = ("surface_render_method" if hasattr(material, "surface_render_method")
+                           else "blend_method" if hasattr(material, "blend_method") else None)
         rows.append({"material": material.name,
                      "source_name_j": material.get("violet_pmx_name_j", material.mmd_material.name_j),
                      "source_name_e": material.get("violet_pmx_name_e", material.mmd_material.name_e),
                      "mmd_name_j": material.mmd_material.name_j, "alpha": material.mmd_material.alpha,
+                     "shader_alpha": _socket_report(shader, "Alpha"),
+                     "shader_base_alpha": _socket_report(shader, "Base Alpha"),
+                     "render_method": getattr(material, render_property) if render_property else None,
+                     "render_method_property": render_property,
                      "double_sided": material.mmd_material.is_double_sided,
                      "slots": material_slots.get(material, []), "textures": textures})
     return {"model": root.name, "source": root.get("violet_pmx_source", ""),
             "meshes": len(meshes), "material_count": len(rows),
-            "missing_textures": sorted(missing), "materials": rows}
+            "missing_textures": sorted(missing), "ambiguous_textures": ambiguous, "materials": rows}
 
 
 def write_report(root, report):
@@ -260,7 +340,7 @@ def import_pmx(context, filepath, scale=0.08, import_physics=False, pack=False):
             raise RuntimeError("PMX importer did not create a model root")
         root = roots[0]
         root["violet_pmx_source"] = filepath
-        root["violet_pmx_version"] = "0.1.0"
+        root["violet_pmx_version"] = "0.2.0"
         collection["violet_pmx_root"] = root.name
         for material, source in zip(model_materials(root), model.materials, strict=True):
             # MMD Tools requires unique editable names. Keep exact PMX names separately.
