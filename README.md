@@ -9,6 +9,8 @@ Blender
 
 VioletBlender Windows build: [编译与运行说明](doc/guides/violet_windows_build.md).
 
+VioletBlender PMX: [导入与材质整理](doc/guides/violet_pmx.md).
+
 Blender is the free and open source 3D creation suite.
 It supports the entirety of the 3D pipeline—modeling, rigging, animation, simulation, rendering, compositing,
 motion tracking and video editing.
