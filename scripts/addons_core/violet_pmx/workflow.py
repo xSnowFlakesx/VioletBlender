@@ -310,6 +310,10 @@ def import_pmx(context, filepath, scale=0.08, import_physics=False, pack=False):
     from mmd_tools.core.pmx.importer import PMXImporter
 
     filepath = os.path.abspath(bpy.path.abspath(filepath))
+    # MMD Tools resolves texture paths from a canonical parent directory. Match
+    # that directory when Windows supplies an 8.3 alias, while keeping a PMX
+    # file symlink itself in its original directory.
+    filepath = os.path.join(os.path.realpath(os.path.dirname(filepath)), os.path.basename(filepath))
     if Path(filepath).suffix.lower() != ".pmx":
         raise ValueError("Select a .pmx model")
     model = pmx.load(filepath)

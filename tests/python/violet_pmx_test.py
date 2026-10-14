@@ -122,6 +122,98 @@ def snapshot():
             ('objects', 'meshes', 'armatures', 'materials', 'images', 'node_groups', 'texts', 'collections')}
 
 
+def remove_new_data(before):
+    for name, items in before.items():
+        data = getattr(bpy.data, name)
+        for item in set(data) - items:
+            data.remove(item, do_unlink=True)
+
+
+def check_source_path_aliases(directory):
+    """Check canonical parent paths and preserve PMX file symlink location."""
+    real_model_dir = directory / 'real-model'
+    real_model_dir.mkdir()
+    model_path = make_fixture(real_model_dir)
+    alias_dir = directory / 'model-directory-alias'
+    try:
+        os.symlink(str(real_model_dir), str(alias_dir), target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        if os.name != 'nt' or (isinstance(exc, OSError) and getattr(exc, 'winerror', None) != 1314):
+            raise
+        print('VIOLET_PMX_PATH_ALIAS_SKIP_DIRECTORY:', str(exc))
+    else:
+        search_dir = directory / 'alias-search'
+        for subdir in ('', 'other', 'textures'):
+            target = search_dir / subdir / 'missing.png'
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((real_model_dir / 'textures/共享.png').read_bytes())
+        before = snapshot()
+        window = bpy.context.window
+        previous_active = bpy.context.view_layer.objects.active
+        previous_selected = list(bpy.context.selected_objects)
+        try:
+            root, _ = workflow.import_pmx(bpy.context, str(alias_dir / model_path.name))
+            expected_source = real_model_dir.resolve() / model_path.name
+            assert root['violet_pmx_source'] == str(expected_source), root['violet_pmx_source']
+            material = workflow.model_materials(root)[2]
+            assert material.mmd_material.texture_rel_path == 'textures/missing.png', material.mmd_material.texture_rel_path
+            report = workflow.organize_materials(root, str(search_dir))
+            assert report['repaired_textures'] == 1 and not report['missing_textures'], report
+            assert not report['ambiguous_textures'], report
+            image = material.node_tree.nodes['mmd_base_tex'].image
+            assert workflow._canonical(bpy.path.abspath(image.filepath)) == workflow._canonical(search_dir / 'textures/missing.png')
+        finally:
+            remove_new_data(before)
+            for obj in bpy.context.selected_objects:
+                obj.select_set(False)
+            for obj in previous_selected:
+                if obj.name in bpy.data.objects:
+                    obj.select_set(True)
+            if previous_active and previous_active.name in bpy.data.objects:
+                bpy.context.view_layer.objects.active = previous_active
+            elif window:
+                bpy.context.view_layer.objects.active = None
+
+    # A symlinked PMX file in a separate directory must still resolve its own
+    # relative textures from that link directory, not from the target folder.
+    file_link_dir = directory / 'pmx-file-link'
+    file_link_dir.mkdir()
+    file_link_texture = file_link_dir / 'textures' / 'missing.png'
+    file_link_texture.parent.mkdir()
+    file_link_texture.write_bytes((real_model_dir / 'textures/共享.png').read_bytes())
+    linked_pmx = file_link_dir / 'linked-model.pmx'
+    try:
+        os.symlink(str(model_path), str(linked_pmx))
+    except (OSError, NotImplementedError) as exc:
+        if os.name != 'nt' or (isinstance(exc, OSError) and getattr(exc, 'winerror', None) != 1314):
+            raise
+        print('VIOLET_PMX_PATH_ALIAS_SKIP_FILE:', str(exc))
+        return
+
+    before = snapshot()
+    window = bpy.context.window
+    previous_active = bpy.context.view_layer.objects.active
+    previous_selected = list(bpy.context.selected_objects)
+    try:
+        root, _ = workflow.import_pmx(bpy.context, str(linked_pmx))
+        expected_source = os.path.join(os.path.realpath(file_link_dir), linked_pmx.name)
+        assert root['violet_pmx_source'] == expected_source, root['violet_pmx_source']
+        material = workflow.model_materials(root)[2]
+        assert not material.node_tree.nodes['mmd_base_tex'].image.get('violet_missing_texture', False)
+        assert workflow._canonical(bpy.path.abspath(material.node_tree.nodes['mmd_base_tex'].image.filepath)) == workflow._canonical(file_link_texture)
+    finally:
+        remove_new_data(before)
+        for obj in bpy.context.selected_objects:
+            obj.select_set(False)
+        for obj in previous_selected:
+            if obj.name in bpy.data.objects:
+                obj.select_set(True)
+        if previous_active and previous_active.name in bpy.data.objects:
+            bpy.context.view_layer.objects.active = previous_active
+        elif window:
+            bpy.context.view_layer.objects.active = None
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='violet-pmx-') as temp:
         directory = Path(temp)
@@ -175,6 +267,7 @@ def main():
         assert list(mesh.materials) == before_slots
         assert [face.material_index for face in mesh.polygons] == before_indices
         assert list(cube.data.materials) == cube_materials
+        check_source_path_aliases(directory)
 
         # A match at the search root and one in a child are ambiguous.
         repair_dir = directory / 'repair'
