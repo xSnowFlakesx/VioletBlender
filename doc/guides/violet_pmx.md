@@ -1,12 +1,13 @@
 # VioletBlender：PMX 导入与材质整理
 
-0.2.0 提供 PMX 2.0 导入、模型独立集合、骨骼和权重、顶点及材质等 Morph、
+0.3.0 提供 PMX 2.0 导入、模型独立集合、骨骼和权重、顶点及材质等 Morph、
 UV 和自定义法线，以及模型范围内的贴图整理。底层固定使用 MMD Tools
-v4.5.14，Violet 的入口和整理逻辑在 `violet_pmx` 中。
+v4.5.14，Violet 的入口和整理逻辑在 `violet_pmx` 中。VMD 骨骼动画和已组装的
+顶点表情导入见[动作指南](violet_vmd.md)。
 
 ## 安装和使用
 
-Windows 的 **PMX import and materials on Windows** 工作流提供两种产物：
+Windows 的 **PMX, VMD and materials on Windows** 工作流提供两种产物：
 
 - `VioletBlender-windows-PMX-*`：包含已编译的 Blender 5.2 和 PMX 插件。
   解压后运行 `blender.exe`。
@@ -14,7 +15,7 @@ Windows 的 **PMX import and materials on Windows** 工作流提供两种产物�
   可安装到之前的 VioletBlender 或 Blender 4.2+。
   在 **Edit → Preferences → Add-ons → 菜单 → Install from Disk** 选择该 ZIP。
 
-在 Add-ons 搜索并启用 **Violet PMX Import & Materials**；它会自动启用随包提供的
+在 Add-ons 搜索并启用 **Violet PMX, VMD & Materials**；它会自动启用随包提供的
 MMD Tools。插件已包含依赖，无需 pip 或联网。使用自定义 PMX 包时请使用随包的
 MMD Tools，避免同时启用另一个来源的 MMD Tools 扩展。
 

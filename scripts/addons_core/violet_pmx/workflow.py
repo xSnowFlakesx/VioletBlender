@@ -344,7 +344,8 @@ def import_pmx(context, filepath, scale=0.08, import_physics=False, pack=False):
             raise RuntimeError("PMX importer did not create a model root")
         root = roots[0]
         root["violet_pmx_source"] = filepath
-        root["violet_pmx_version"] = "0.2.0"
+        root["violet_pmx_version"] = "0.3.0"
+        root["violet_pmx_scale"] = float(scale)
         collection["violet_pmx_root"] = root.name
         for material, source in zip(model_materials(root), model.materials, strict=True):
             # MMD Tools requires unique editable names. Keep exact PMX names separately.

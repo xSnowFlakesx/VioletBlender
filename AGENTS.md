@@ -55,6 +55,9 @@
   优先修改 Violet 工作流，必要的上游补丁保持小范围并更新来源记录。
 - PMX 行为验证使用 `tests/python/violet_pmx_test.py`；功能范围和使用方式见
   `doc/guides/violet_pmx.md`。优先生成合成模型，不随意加入第三方角色资源。
+- VMD 动作工作流位于 `scripts/addons_core/violet_pmx/motion.py`，行为验证使用
+  `tests/python/violet_vmd_test.py`，说明见 `doc/guides/violet_vmd.md`。使用合成动作
+  验证骨骼/表情实际求值、旧动作保留、模型隔离及失败回滚。
 - Python 插件修改优先复用可用的 Windows Blender 5.2 编译产物验证；只有
   C++、构建配置或依赖发生相关变化时才重新完整编译。基础产物过期时按
   `doc/guides/violet_windows_build.md` 及现有工作流补齐构建。
