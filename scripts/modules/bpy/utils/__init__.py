@@ -258,8 +258,11 @@ def load_scripts(*, reload_scripts=False, refresh_scripts=False, extensions=True
         # to reload. note that they will only actually reload of the
         # modification time changes. This `won't` work for packages so...
         # its not perfect.
-        for addon_module_name in [ext.module for ext in _preferences.addons]:
-            _addon_utils.disable(addon_module_name)
+        addon_module_names = {ext.module for ext in _preferences.addons}
+        addon_module_names.update(_addon_utils._addons_hidden_core)
+        for addon_module_name in addon_module_names:
+            if _addon_utils.check(addon_module_name)[1]:
+                _addon_utils.disable(addon_module_name)
 
     def test_reload(mod):
         import importlib

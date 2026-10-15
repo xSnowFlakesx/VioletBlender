@@ -49,6 +49,7 @@ _addons_hidden_core = {
     "io_curve_svg",
     "io_mesh_uv_layout",
     "io_scene_fbx",
+    "violet_pmx",
 }
 
 
@@ -636,6 +637,9 @@ def reset_all(*, reload_scripts=False):
 
         for mod_name, _mod_path in _bpy.path.module_names(path, package=pkg_id):
             is_enabled, is_loaded = check(mod_name)
+            is_hidden_core = mod_name in _addons_hidden_core
+            if is_hidden_core:
+                is_enabled = True
 
             # first check if reload is needed before changing state.
             if reload_scripts:
@@ -647,7 +651,11 @@ def reset_all(*, reload_scripts=False):
             if is_enabled == is_loaded:
                 pass
             elif is_enabled:
-                enable(mod_name, refresh_handled=True)
+                enable(
+                    mod_name,
+                    refresh_handled=True,
+                    persistent=is_hidden_core,
+                )
             elif is_loaded:
                 print("\taddon_utils.reset_all unloading", mod_name)
                 disable(mod_name)

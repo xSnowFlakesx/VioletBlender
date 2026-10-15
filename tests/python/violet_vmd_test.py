@@ -23,7 +23,8 @@ if not os.environ.get('VIOLET_PMX_INSTALLED'):
 if os.environ.get('VIOLET_PMX_EXPECT_VERSION'):
     expected_version = tuple(map(int, os.environ['VIOLET_PMX_EXPECT_VERSION'].split('.')))
     assert bpy.app.version[:len(expected_version)] == expected_version, bpy.app.version_string
-assert addon_utils.enable('violet_pmx', default_set=True, persistent=True) is not None
+if not addon_utils.check('violet_pmx')[1]:
+    assert addon_utils.enable('violet_pmx', default_set=True, persistent=True) is not None
 
 from mmd_tools.core.model import Model
 from mmd_tools.core.vmd.importer import VMDImporter
