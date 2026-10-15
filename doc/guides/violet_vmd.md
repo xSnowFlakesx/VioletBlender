@@ -1,19 +1,22 @@
 # VioletBlender：VMD 动作导入
 
-0.3.0 可将 VMD 的骨骼动作及与现有 Shape Key 精确同名的顶点表情导入选中的
+0.3.1 可将 VMD 的骨骼动作及与现有 Shape Key 精确同名的顶点表情导入选中的
 PMX 模型。插件包和 MMD Tools 依赖见[PMX 指南](violet_pmx.md)。
 
 ## 使用
 
-1. 在视图中选中 PMX 模型根对象、骨架或网格，然后打开 **N → Violet**。
-2. 设置 **Start Frame**。VMD 第 0 帧默认对应 Blender 第 1 帧。
+1. 先在视图中选中 PMX 模型根对象、骨架或网格，然后使用 **File → Import →
+   Violet VMD Motion (.vmd)**。未选中模型时菜单项会禁用，并显示“Select an imported PMX model”提示。
+2. 在文件选择器的导入选项中设置 **Start Frame**。VMD 第 0 帧默认对应 Blender 第 1 帧。
 3. 默认使用 PMX 导入时保存在模型根对象上的缩放值；旧模型没有该值时会按
-   `root.empty_display_size × 0.2` 推断，并在动作报告中标明。关闭 **Use PMX Scale**
-   可填写 **Scale** 覆盖值。
-4. 点击 **Import VMD** 并选择 `.vmd`。动作源帧率按 30 fps 解释，导入后场景设为
+   `root.empty_display_size × 0.2` 推断，并在动作报告中标明。关闭 **Use PMX Import Scale**
+   可填写 **Scale Override**。
+4. 选择 `.vmd` 并点击 **Import VMD**。动作源帧率按 30 fps 解释，导入后场景设为
    30 fps。默认根据实际导入的骨骼和表情曲线调整时间范围。
-5. 点击 **View Motion Report** 查看 JSON 报告。报告保存在 blend 的独立 Text 数据
-   中，列出匹配与未匹配通道、需要先组装的 PMX Morph、使用的缩放值和新建 Action。
+5. 可在 **N → Violet → View Motion Report** 中查看 JSON 报告。报告保存在 blend 的
+   独立 Text 数据中，列出匹配与未匹配通道、需要先组装的 PMX Morph、使用的缩放值和新建 Action。
+
+也可以在 **N → Violet** 面板中设置相同选项并点击 **Import VMD**。
 
 VMD 骨骼按 MMD 日文骨骼名映射，即使 Blender 中的骨骼已重命名也会按 PMX 名称
 查找；表情只按已有顶点 Shape Key 名精确匹配。UV、骨骼、材质及群组 Morph 不会由

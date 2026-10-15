@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Violet PMX, VMD & Materials",
     "author": "VioletBlender contributors",
-    "version": (0, 3, 0),
+    "version": (0, 3, 1),
     "blender": (4, 2, 0),
     "location": "File > Import; 3D View > Sidebar > Violet",
     "description": "Import PMX models and VMD motion; organize materials and textures",
@@ -66,7 +66,10 @@ class VIOLET_OT_import_vmd(bpy.types.Operator, ImportHelper):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'OBJECT' and workflow.model_root(context.object) is not None
+        if workflow.model_root(context.object) is None:
+            cls.poll_message_set("Select an imported PMX model")
+            return False
+        return context.mode == 'OBJECT'
 
     def execute(self, context):
         root = workflow.model_root(context.object)
@@ -215,6 +218,7 @@ class VIOLET_PT_pmx(bpy.types.Panel):
 
 def menu_import(self, context):
     self.layout.operator(VIOLET_OT_import_pmx.bl_idname, text="Violet PMX (.pmx)")
+    self.layout.operator(VIOLET_OT_import_vmd.bl_idname, text="Violet VMD Motion (.vmd)")
 
 
 CLASSES = (VIOLET_OT_import_pmx, VIOLET_OT_import_vmd, VIOLET_OT_motion_report,

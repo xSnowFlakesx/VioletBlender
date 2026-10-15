@@ -1,23 +1,27 @@
 # VioletBlender：PMX 导入与材质整理
 
-0.3.0 提供 PMX 2.0 导入、模型独立集合、骨骼和权重、顶点及材质等 Morph、
+0.3.1 提供 PMX 2.0 导入、模型独立集合、骨骼和权重、顶点及材质等 Morph、
 UV 和自定义法线，以及模型范围内的贴图整理。底层固定使用 MMD Tools
 v4.5.14，Violet 的入口和整理逻辑在 `violet_pmx` 中。VMD 骨骼动画和已组装的
 顶点表情导入见[动作指南](violet_vmd.md)。
 
 ## 安装和使用
 
+从 VioletBlender 源码构建的 Blender 会在启动时自动启用 Violet PMX。包括 Windows
+便携版在内，打开 **File → Import** 即可使用，不必搜索或手动启用插件。随包的
+MMD Tools 仍显示在插件首选项中，以便配置它自己的选项。
+
 Windows 的 **PMX, VMD and materials on Windows** 工作流提供两种产物：
 
 - `VioletBlender-windows-PMX-*`：包含已编译的 Blender 5.2 和 PMX 插件。
   解压后运行 `blender.exe`。
 - `VioletBlender-PMX-addon-*`：内部的 `VioletBlender-pmx-addon.zip` 是离线插件包，
-  可安装到之前的 VioletBlender 或 Blender 4.2+。
-  在 **Edit → Preferences → Add-ons → 菜单 → Install from Disk** 选择该 ZIP。
+  可安装到之前的 VioletBlender 或 Blender 4.2+。通过 **Edit → Preferences →
+  Add-ons → 菜单 → Install from Disk** 安装 ZIP，然后启用 **Violet PMX, VMD & Materials**。
 
-在 Add-ons 搜索并启用 **Violet PMX, VMD & Materials**；它会自动启用随包提供的
-MMD Tools。插件已包含依赖，无需 pip 或联网。使用自定义 PMX 包时请使用随包的
-MMD Tools，避免同时启用另一个来源的 MMD Tools 扩展。
+离线插件 ZIP 仅用于手动安装，不包含 Blender 运行时文件。插件已包含 MMD Tools
+依赖，无需 pip 或联网。使用自定义 PMX 包时请使用随包的 MMD Tools，避免同时启用
+另一个来源的 MMD Tools 扩展。
 
 1. 使用 **File → Import → Violet PMX (.pmx)**。默认缩放为 `0.08`；
    保留骨骼命名和顶点，不自动合并顶点。
@@ -50,7 +54,8 @@ MMD Tools，避免同时启用另一个来源的 MMD Tools 扩展。
 
 当前入口支持 **PMX 2.0**；PMX 2.1 会明确报错。物理数据可选择导入，
 物理模拟的构建和调校仍使用 MMD Tools；本阶段验收聚焦网格、骨骼、Morph 和材质。
-此入口不导入 PMD/VMD，随包 MMD Tools 的高级操作仍然保留。
+此入口不导入 PMD；VMD 动作请见[动作指南](violet_vmd.md)。随包 MMD Tools 的高级
+操作仍然保留。
 
 测试使用从零生成的模型，无第三方角色资源。覆盖材质重名、透明材质与贴图 Alpha、
 中文路径、Windows 路径分隔符、缺失及歧义贴图、不同色彩空间、重复导入、失败回滚、

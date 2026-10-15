@@ -3,12 +3,15 @@ name: PMX, VMD and materials on Windows
 on:
   workflow_dispatch:
   push:
-    branches: [mmd-main, codex/pmx-material-workflow, codex/pmx-material-refinements, codex/vmd-motion-workflow]
+    branches: [mmd-main, codex/pmx-material-workflow, codex/pmx-material-refinements, codex/vmd-motion-workflow, codex/native-mmd-import]
     paths:
       - 'scripts/addons_core/mmd_tools/**'
       - 'scripts/addons_core/violet_pmx/**'
+      - 'scripts/modules/addon_utils.py'
+      - 'scripts/modules/bpy/utils/__init__.py'
       - 'tests/python/violet_pmx*.py'
       - 'tests/python/violet_vmd*.py'
+      - 'tests/python/violet_native_import_test.py'
       - 'build_files/utils/package_violet_pmx.py'
       - '.github/workflows/pmx-validation.yml'
 
@@ -60,7 +63,7 @@ jobs:
           name: ${{ steps.base.outputs.artifact_name }}
           path: ${{ runner.temp }}/violet-base
 
-      - name: Install the current MMD packages and verify Blender 5.2
+      - name: Install current scripts and verify Blender 5.2 native startup
         shell: pwsh
         env:
           VIOLET_PMX_INSTALLED: '1'
@@ -69,11 +72,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $base = "$env:RUNNER_TEMP/violet-base"
           $addons = "$base/5.2/scripts/addons_core"
-          if (!(Test-Path "$base/blender.exe") -or !(Test-Path $addons)) { throw 'Expected a Blender 5.2 portable build' }
+          $modules = "$base/5.2/scripts/modules"
+          if (!(Test-Path "$base/blender.exe") -or !(Test-Path $addons) -or !(Test-Path $modules)) { throw 'Expected a Blender 5.2 portable build' }
           foreach ($name in @('mmd_tools', 'violet_pmx')) {
             if (Test-Path "$addons/$name") { Remove-Item "$addons/$name" -Recurse -Force }
             Copy-Item "scripts/addons_core/$name" $addons -Recurse
           }
+          Copy-Item 'scripts/modules/addon_utils.py' "$modules/addon_utils.py" -Force
+          New-Item -ItemType Directory -Force "$modules/bpy/utils" | Out-Null
+          Copy-Item 'scripts/modules/bpy/utils/__init__.py' "$modules/bpy/utils/__init__.py" -Force
+          & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_native_import_test.py 2>&1 | Tee-Object -FilePath native-import-validation.log
+          if ($LASTEXITCODE -ne 0) { throw "Native PMX/VMD startup validation failed: $LASTEXITCODE" }
           & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_pmx_test.py 2>&1 | Tee-Object -FilePath pmx-validation.log
           if ($LASTEXITCODE -ne 0) { throw "PMX validation failed: $LASTEXITCODE" }
           & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_pmx_model_check_test.py 2>&1 | Tee-Object -FilePath pmx-model-check-validation.log
@@ -86,6 +95,7 @@ jobs:
         env:
           VIOLET_BASE_SHA: ${{ steps.base.outputs.base_sha }}
           VIOLET_BASE_RUN: ${{ steps.base.outputs.run_id }}
+          VIOLET_RUNTIME_SCRIPTS_SHA: ${{ github.sha }}
         run: |
           python build_files/utils/package_violet_pmx.py --output "$env:RUNNER_TEMP/pmx-addon"
           if ($LASTEXITCODE -ne 0) { throw 'Add-on packaging failed' }
@@ -95,6 +105,7 @@ jobs:
           @{
             executable_source_sha = $env:VIOLET_BASE_SHA
             executable_build_run = $env:VIOLET_BASE_RUN
+            runtime_scripts_source_sha = $env:VIOLET_RUNTIME_SCRIPTS_SHA
             addon_source_sha = $env:GITHUB_SHA
           } | ConvertTo-Json | Set-Content "$env:RUNNER_TEMP/violet-base/violet-pmx-build.json"
 
@@ -120,6 +131,7 @@ jobs:
         with:
           name: PMX-validation-log-${{ github.sha }}
           path: |
+            native-import-validation.log
             pmx-validation.log
             pmx-model-check-validation.log
             vmd-validation.log
