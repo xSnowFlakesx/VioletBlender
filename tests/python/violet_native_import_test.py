@@ -99,7 +99,9 @@ with tempfile.TemporaryDirectory(prefix='violet-native-import-') as temp:
     pmx_path = pmx_fixture['make_fixture'](directory)
     assert bpy.ops.violet.import_pmx(filepath=str(pmx_path), scale=0.08) == {'FINISHED'}
     root = workflow.model_root(bpy.context.object)
-    assert root is not None and root.get('violet_pmx_scale') == 0.08
+    assert root is not None
+    # Operator FloatProperty values use single precision before reaching Python.
+    assert abs(root['violet_pmx_scale'] - 0.08) < 1e-7, root['violet_pmx_scale']
 
     vmd_path = vmd_helpers['make_motion'](directory)
     assert bpy.ops.violet.import_vmd(filepath=str(vmd_path), start_frame=10) == {'FINISHED'}
