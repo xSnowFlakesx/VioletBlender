@@ -1,6 +1,6 @@
 # VioletBlender：VMD 动作导入
 
-0.3.1 可将 VMD 的骨骼动作及与现有 Shape Key 精确同名的顶点表情导入选中的
+0.4.0 可将 VMD 的骨骼动作及与现有 Shape Key 精确同名的顶点表情导入选中的
 PMX 模型。插件包和 MMD Tools 依赖见[PMX 指南](violet_pmx.md)。
 
 ## 使用
