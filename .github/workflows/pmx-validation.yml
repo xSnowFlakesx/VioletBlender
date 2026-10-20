@@ -3,7 +3,7 @@ name: PMX, VMD and materials on Windows
 on:
   workflow_dispatch:
   push:
-    branches: [mmd-main, codex/pmx-material-workflow, codex/pmx-material-refinements, codex/vmd-motion-workflow, codex/native-mmd-import]
+    branches: [mmd-main, codex/pmx-material-workflow, codex/pmx-material-refinements, codex/vmd-motion-workflow, codex/native-mmd-import, codex/eevee-toon-presets]
     paths:
       - 'scripts/addons_core/mmd_tools/**'
       - 'scripts/addons_core/violet_pmx/**'
@@ -12,6 +12,7 @@ on:
       - 'tests/python/violet_pmx*.py'
       - 'tests/python/violet_vmd*.py'
       - 'tests/python/violet_native_import_test.py'
+      - 'tests/python/violet_toon*.py'
       - 'build_files/utils/package_violet_pmx.py'
       - '.github/workflows/pmx-validation.yml'
 
@@ -89,6 +90,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PMX model-check CLI validation failed: $LASTEXITCODE" }
           & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_vmd_test.py 2>&1 | Tee-Object -FilePath vmd-validation.log
           if ($LASTEXITCODE -ne 0) { throw "VMD motion validation failed: $LASTEXITCODE" }
+          & "$base/blender.exe" --background --factory-startup --python-exit-code 1 --python tests/python/violet_toon_test.py 2>&1 | Tee-Object -FilePath toon-validation.log
+          if ($LASTEXITCODE -ne 0) { throw "Toon material validation failed: $LASTEXITCODE" }
 
       - name: Package offline add-ons and record portable build provenance
         shell: pwsh
@@ -101,6 +104,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Add-on packaging failed' }
           Copy-Item doc/guides/violet_pmx.md "$env:RUNNER_TEMP/violet-base/Violet-PMX-Guide.md"
           Copy-Item doc/guides/violet_vmd.md "$env:RUNNER_TEMP/violet-base/Violet-VMD-Guide.md"
+          Copy-Item doc/guides/violet_toon.md "$env:RUNNER_TEMP/violet-base/Violet-Toon-Guide.md"
           Copy-Item tests/python/violet_pmx_model_check.py "$env:RUNNER_TEMP/violet-base/violet_pmx_model_check.py"
           @{
             executable_source_sha = $env:VIOLET_BASE_SHA
@@ -135,5 +139,6 @@ jobs:
             pmx-validation.log
             pmx-model-check-validation.log
             vmd-validation.log
+            toon-validation.log
           if-no-files-found: warn
           retention-days: 14

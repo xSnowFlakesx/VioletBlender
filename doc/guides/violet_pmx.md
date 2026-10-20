@@ -1,9 +1,10 @@
 # VioletBlender：PMX 导入与材质整理
 
-0.3.1 提供 PMX 2.0 导入、模型独立集合、骨骼和权重、顶点及材质等 Morph、
+0.4.0 提供 PMX 2.0 导入、模型独立集合、骨骼和权重、顶点及材质等 Morph、
 UV 和自定义法线，以及模型范围内的贴图整理。底层固定使用 MMD Tools
 v4.5.14，Violet 的入口和整理逻辑在 `violet_pmx` 中。VMD 骨骼动画和已组装的
-顶点表情导入见[动作指南](violet_vmd.md)。
+顶点表情导入见[动作指南](violet_vmd.md)；Eevee 二段/三段 Toon 预设见
+[Toon 指南](violet_toon.md)。
 
 ## 安装和使用
 
@@ -48,7 +49,8 @@ Windows 的 **PMX, VMD and materials on Windows** 工作流提供两种产物：
 
 未设置外部共享 Toon 文件夹时，使用自行生成的中性双色阶预览贴图，保留 PMX 的
 共享 Toon 编号。需要原始颜色时，可在 MMD Tools 首选项配置自己的共享 Toon
-目录。首版尚未制作 Violet 的专用 Toon 渲染预设。
+目录。Violet Toon 使用模型范围内的 Eevee 节点输出，不改写 MMD Tools 材质输入；
+其设置、限制和恢复方式见[Toon 指南](violet_toon.md)。
 
 ## 范围和验证
 
@@ -80,6 +82,7 @@ Windows 便携版发布包根目录也提供 `violet_pmx_model_check.py`，可�
 
 ```sh
 blender --background --factory-startup --python-exit-code 1 --python tests/python/violet_pmx_test.py
+blender --background --factory-startup --python-exit-code 1 --python tests/python/violet_toon_test.py
 python build_files/utils/package_violet_pmx.py --output /path/to/output
 ```
 

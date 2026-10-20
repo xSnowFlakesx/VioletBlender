@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Violet PMX, VMD & Materials",
     "author": "VioletBlender contributors",
-    "version": (0, 3, 1),
+    "version": (0, 4, 0),
     "blender": (4, 2, 0),
     "location": "File > Import; 3D View > Sidebar > Violet",
     "description": "Import PMX models and VMD motion; organize materials and textures",
@@ -16,7 +16,7 @@ import bpy
 from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import motion, workflow
+from . import motion, toon, workflow
 
 
 class VIOLET_OT_import_pmx(bpy.types.Operator, ImportHelper):
@@ -168,6 +168,83 @@ class VIOLET_OT_material_report(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class _VIOLET_OT_toon_base(bpy.types.Operator):
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return workflow.model_root(context.object) is not None and context.mode == 'OBJECT'
+
+    def run(self, context, operation):
+        root = workflow.model_root(context.object)
+        try:
+            count = operation(root)
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self.report({'ERROR'}, "Violet Toon failed: " + str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Violet Toon updated {count} materials")
+        return {'FINISHED'}
+
+
+class VIOLET_OT_toon_apply(_VIOLET_OT_toon_base):
+    bl_idname = "violet.toon_apply"
+    bl_label = "Apply to Model"
+    bl_description = "Add an isolated Eevee Toon output to this PMX model's materials"
+
+    def execute(self, context):
+        return self.run(context, toon.apply)
+
+
+class VIOLET_OT_toon_update(_VIOLET_OT_toon_base):
+    bl_idname = "violet.toon_update"
+    bl_label = "Update Model"
+    bl_description = "Update the owned Toon ramps from the selected model settings"
+
+    def execute(self, context):
+        return self.run(context, toon.update)
+
+
+class VIOLET_OT_toon_restore(_VIOLET_OT_toon_base):
+    bl_idname = "violet.toon_restore"
+    bl_label = "Restore Original"
+    bl_description = "Remove Violet-owned Toon nodes and restore the original material outputs"
+
+    def execute(self, context):
+        return self.run(context, toon.restore)
+
+
+class VIOLET_PT_toon(bpy.types.Panel):
+    bl_label = "Violet Toon 0.4"
+    bl_idname = "VIOLET_PT_toon"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "material"
+
+    @classmethod
+    def poll(cls, context):
+        return workflow.model_root(context.object) is not None
+
+    def draw(self, context):
+        layout = self.layout
+        root = workflow.model_root(context.object)
+        layout.label(text="Model: " + (root.mmd_root.name or root.name))
+        if context.scene.render.engine not in {'BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE'}:
+            layout.label(text="Use Eevee for Toon rendering", icon='INFO')
+        layout.prop(root, "violet_toon_preset")
+        layout.prop(root, "violet_toon_threshold")
+        layout.prop(root, "violet_toon_shadow_brightness")
+        managed = bool(root.get(toon.OWNER_KEY))
+        row = layout.row(align=True)
+        row.enabled = not managed
+        row.operator("violet.toon_apply", icon='SHADING_RENDERED')
+        row = layout.row(align=True)
+        row.enabled = managed
+        row.operator("violet.toon_update", icon='FILE_REFRESH')
+        row.operator("violet.toon_restore", icon='LOOP_BACK')
+
+
 class VIOLET_PT_pmx(bpy.types.Panel):
     bl_label = "PMX & Materials"
     bl_idname = "VIOLET_PT_pmx"
@@ -223,16 +300,22 @@ def menu_import(self, context):
 
 CLASSES = (VIOLET_OT_import_pmx, VIOLET_OT_import_vmd, VIOLET_OT_motion_report,
            VIOLET_OT_organize_materials, VIOLET_OT_pack_textures,
-           VIOLET_OT_material_report, VIOLET_PT_pmx)
+           VIOLET_OT_material_report, VIOLET_PT_pmx,
+           VIOLET_OT_toon_apply, VIOLET_OT_toon_update, VIOLET_OT_toon_restore,
+           VIOLET_PT_toon)
+
+TOON_PROPERTY_GROUP = None
 
 
 def register():
+    global TOON_PROPERTY_GROUP
     # One switch for the Violet UI and its bundled, offline PMX dependency.
     if not addon_utils.check("mmd_tools")[1]:
         if addon_utils.enable("mmd_tools", default_set=True, persistent=True) is None:
             raise RuntimeError("Enable the bundled MMD Tools before Violet PMX")
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    TOON_PROPERTY_GROUP = toon.register_properties()
     bpy.types.Scene.violet_texture_directory = StringProperty(
         name="Texture Folder", subtype='DIR_PATH',
         description="Optional folder to search recursively for missing textures; ambiguous names are left unresolved")
@@ -253,10 +336,13 @@ def register():
 
 def unregister():
     bpy.types.TOPBAR_MT_file_import.remove(menu_import)
+    global TOON_PROPERTY_GROUP
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)
+    toon.unregister_properties(TOON_PROPERTY_GROUP)
+    TOON_PROPERTY_GROUP = None
     del bpy.types.Scene.violet_vmd_update_timeline
     del bpy.types.Scene.violet_vmd_scale
     del bpy.types.Scene.violet_vmd_use_model_scale
     del bpy.types.Scene.violet_vmd_start_frame
     del bpy.types.Scene.violet_texture_directory
-    for cls in reversed(CLASSES):
-        bpy.utils.unregister_class(cls)

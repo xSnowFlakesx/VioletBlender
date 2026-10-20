@@ -58,6 +58,9 @@
 - VMD 动作工作流位于 `scripts/addons_core/violet_pmx/motion.py`，行为验证使用
   `tests/python/violet_vmd_test.py`，说明见 `doc/guides/violet_vmd.md`。使用合成动作
   验证骨骼/表情实际求值、旧动作保留、模型隔离及失败回滚。
+- Eevee Toon 预设位于 `scripts/addons_core/violet_pmx/toon.py`，行为验证使用
+  `tests/python/violet_toon_test.py`，说明见 `doc/guides/violet_toon.md`。保持
+  Eevee 输出模型独立，并验证原始 MMD 图、Cycles 输出及失败回滚。
 - 原生自动启用与重载生命周期位于 `scripts/modules/addon_utils.py` 和
   `scripts/modules/bpy/utils/__init__.py`；`tests/python/violet_native_import_test.py`
   验证启动、导入菜单、PMX/VMD 操作器及脚本重载。
