@@ -177,9 +177,27 @@ def main():
             assert (getattr(material, "surface_render_method", None),
                     getattr(material, "blend_method", None)) == snapshots[mats_a.index(material)]["render"]
 
-        # Update and Restore must refuse hand edits to the owned graph before mutation.
+        # Socket display names vary by Blender version; links must remain valid
+        # when the Mix Shader Factor is displayed as "Factor" instead of "Fac".
         first_entry = root_a.violet_toon_materials[0]
         first_roles = toon._role_nodes(first_entry.material.node_tree.nodes, owner)
+        group_roles = toon._group_nodes(first_entry.group, owner)
+        factor_sockets = (first_roles['mix'].inputs[0], group_roles['ramp'].inputs[0])
+        original_factor_names = tuple(socket.name for socket in factor_sockets)
+        try:
+            for socket in factor_sockets:
+                try:
+                    socket.name = "Factor"
+                except (AttributeError, TypeError, RuntimeError):
+                    pass
+                assert socket.identifier == "Fac"
+            toon._validate_model_materials(root_a, owner, list(root_a.violet_toon_materials))
+        finally:
+            for socket, original_name in zip(factor_sockets, original_factor_names, strict=True):
+                if socket.name != original_name:
+                    socket.name = original_name
+
+        # Update and Restore must refuse hand edits to the owned graph before mutation.
         fac_socket = first_roles['multiply'].inputs['Fac']
         original_fac = fac_socket.default_value
         fac_socket.default_value = 0.75
@@ -230,6 +248,28 @@ def main():
                 raise AssertionError("Update accepted an edited transparent color")
         finally:
             transparent_color.default_value = original_transparent_color
+        toon._validate_model_materials(root_a, owner, list(root_a.violet_toon_materials))
+
+        # Exact socket-pair validation still rejects a real link change.
+        tree = first_entry.material.node_tree
+        shader = tree.nodes['mmd_shader']
+        mix_node = first_roles['mix']
+        alpha_link = next(link for link in tree.links
+                          if link.from_node == shader and link.from_socket == shader.outputs['Alpha']
+                          and link.to_node == mix_node and link.to_socket == mix_node.inputs[0])
+        tree.links.remove(alpha_link)
+        try:
+            wrong_link = tree.links.new(shader.outputs['Color'], mix_node.inputs[0])
+            try:
+                toon._validate_model_materials(root_a, owner, list(root_a.violet_toon_materials))
+            except ValueError as exc:
+                assert "edited Toon links" in str(exc)
+            else:
+                raise AssertionError("Update preflight accepted a rewired Toon graph")
+            finally:
+                tree.links.remove(wrong_link)
+        finally:
+            tree.links.new(shader.outputs['Alpha'], mix_node.inputs[0])
         toon._validate_model_materials(root_a, owner, list(root_a.violet_toon_materials))
 
         # A helper group borrowed by a different material is protected from updates.

@@ -143,39 +143,47 @@ def _group_instances(group):
     return instances
 
 
-def _link_signature(tree, role_by_node, owned_roles=None):
-    owned_roles = set(role_by_node.values()) if owned_roles is None else set(owned_roles)
-    owned_nodes = {node for node, role in role_by_node.items() if role in owned_roles}
-    def socket_key(socket, sockets):
-        duplicates = [candidate for candidate in sockets if candidate.name == socket.name]
-        return socket.identifier if len(duplicates) > 1 else socket.name
+def _link_key(from_node, from_socket, to_node, to_socket):
+    return (from_node.as_pointer(), from_socket.as_pointer(),
+            to_node.as_pointer(), to_socket.as_pointer())
 
-    return {(role_by_node.get(link.from_node, link.from_node.name),
-             socket_key(link.from_socket, link.from_node.outputs),
-             role_by_node.get(link.to_node, link.to_node.name),
-             socket_key(link.to_socket, link.to_node.inputs))
+
+def _link_signature(tree, owned_nodes):
+    owned_nodes = set(owned_nodes)
+    return {_link_key(link.from_node, link.from_socket, link.to_node, link.to_socket)
             for link in tree.links
             if link.from_node in owned_nodes or link.to_node in owned_nodes}
 
 
-def _expected_outer_links():
+def _expected_outer_links(roles, shader):
+    ramp_group = roles["ramp_group"]
+    multiply = roles["multiply"]
+    emission = roles["emission"]
+    transparent = roles["transparent"]
+    mix = roles["mix"]
+    output = roles["eevee_output"]
     return {
-        ("mmd_shader", "Color", "multiply", "Color2"),
-        ("ramp_group", "Color", "multiply", "Color1"),
-        ("multiply", "Color", "emission", "Color"),
-        ("transparent", "BSDF", "mix", "Shader"),
-        ("emission", "Emission", "mix", "Shader_001"),
-        ("mmd_shader", "Alpha", "mix", "Fac"),
-        ("mix", "Shader", "eevee_output", "Surface"),
+        _link_key(shader, shader.outputs["Color"], multiply, multiply.inputs["Color2"]),
+        _link_key(ramp_group, ramp_group.outputs["Color"], multiply, multiply.inputs["Color1"]),
+        _link_key(multiply, multiply.outputs["Color"], emission, emission.inputs["Color"]),
+        _link_key(transparent, transparent.outputs["BSDF"], mix, mix.inputs[1]),
+        _link_key(emission, emission.outputs["Emission"], mix, mix.inputs[2]),
+        _link_key(shader, shader.outputs["Alpha"], mix, mix.inputs[0]),
+        _link_key(mix, mix.outputs["Shader"], output, output.inputs["Surface"]),
     }
 
 
-def _expected_group_links():
+def _expected_group_links(group_roles):
+    diffuse = group_roles["diffuse"]
+    shader_to_rgb = group_roles["shader_to_rgb"]
+    rgb_to_bw = group_roles["rgb_to_bw"]
+    ramp = group_roles["ramp"]
+    group_output = group_roles["group_output"]
     return {
-        ("diffuse", "BSDF", "shader_to_rgb", "Shader"),
-        ("shader_to_rgb", "Color", "rgb_to_bw", "Color"),
-        ("rgb_to_bw", "Val", "ramp", "Fac"),
-        ("ramp", "Color", "group_output", "Color"),
+        _link_key(diffuse, diffuse.outputs["BSDF"], shader_to_rgb, shader_to_rgb.inputs["Shader"]),
+        _link_key(shader_to_rgb, shader_to_rgb.outputs["Color"], rgb_to_bw, rgb_to_bw.inputs["Color"]),
+        _link_key(rgb_to_bw, rgb_to_bw.outputs["Val"], ramp, ramp.inputs[0]),
+        _link_key(ramp, ramp.outputs["Color"], group_output, group_output.inputs["Color"]),
     }
 
 
@@ -309,9 +317,8 @@ def _validate_graph(material, owner, applied_preset, applied_threshold, applied_
         raise ValueError(f"Material {material.name} has an edited Eevee output")
     if tuple(roles["transparent"].inputs["Color"].default_value) != (1.0, 1.0, 1.0, 1.0):
         raise ValueError(f"Material {material.name} has an edited Toon transparent color")
-    role_by_node = {node: role for role, node in roles.items()}
-    role_by_node[shader] = "mmd_shader"
-    if _link_signature(material.node_tree, role_by_node, ROLES) != _expected_outer_links():
+    if (_link_signature(material.node_tree, roles.values()) !=
+            _expected_outer_links(roles, shader)):
         raise ValueError(f"Material {material.name} has edited Toon links")
     multiply = roles["multiply"]
     if multiply.blend_type != 'MULTIPLY' or abs(multiply.inputs["Fac"].default_value - 1.0) > 1e-6:
@@ -325,8 +332,8 @@ def _validate_graph(material, owner, applied_preset, applied_threshold, applied_
         raise ValueError(f"Material {material.name} has edited Toon ramp nodes")
     if any(node.mute for node in group_roles.values()):
         raise ValueError(f"Material {material.name} has muted Toon ramp nodes")
-    group_signature = _link_signature(group, {node: role for role, node in group_roles.items()})
-    if group_signature != _expected_group_links():
+    group_signature = _link_signature(group, group_roles.values())
+    if group_signature != _expected_group_links(group_roles):
         raise ValueError(f"Material {material.name} has edited Toon ramp links")
     diffuse = group_roles["diffuse"]
     if (tuple(diffuse.inputs["Color"].default_value) != (1.0, 1.0, 1.0, 1.0) or
