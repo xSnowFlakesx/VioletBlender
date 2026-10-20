@@ -38,6 +38,16 @@ def output_flags(material):
                         for node in material.node_tree.nodes if node.type == 'OUTPUT_MATERIAL'))
 
 
+def image_path(image):
+    if image is None:
+        return None
+    if not image.filepath:
+        return ""
+    # Saving a blend can relativize paths and introduce Windows 8.3 aliases.
+    # Compare the referenced file, including its case-normalized long path.
+    return workflow._canonical(bpy.path.abspath(image.filepath, library=image.library))
+
+
 def original_snapshot(material):
     tree = material.node_tree
     nodes = tuple(sorted((node.name, node.bl_idname, node.type) for node in tree.nodes))
@@ -49,7 +59,7 @@ def original_snapshot(material):
                            else socket.default_value)
                           for socket in shader.inputs)
     texture_nodes = tuple(sorted((node.name, node.image.name if node.image else None,
-                                  bpy.path.abspath(node.image.filepath) if node.image else None)
+                                  image_path(node.image))
                                  for node in tree.nodes if node.type == 'TEX_IMAGE'))
     drivers = ()
     if tree.animation_data:
